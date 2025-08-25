@@ -240,3 +240,17 @@ if st.sidebar.button("▶️ Run Analysis"):
                         st.write("---")
     else:
         st.sidebar.warning("Please enter at least one stock symbol.")
+
+        # Section 2: Live Quotes
+st.header("💹 Live Stock Quotes Section")
+live_symbol = st.text_input("Enter stock symbol for live quote (e.g., AAPL)")
+if st.button("Get Live Quote"):
+    if live_symbol:
+        try:
+            ticker = yf.Ticker(live_symbol)
+            quote = ticker.info.get("currentPrice", "N/A")
+            st.success(f"Current price for {live_symbol}: ${quote}")
+        except Exception as e:
+            st.error(f"Error fetching live quote: {e}")
+    else:
+        st.warning("Please enter a stock symbol.")
