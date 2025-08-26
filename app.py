@@ -244,12 +244,99 @@ if st.sidebar.button("▶️ Run Analysis"):
         # Section 2: Live Quotes
 st.header("💹 Live Stock Quotes Section")
 live_symbol = st.text_input("Enter stock symbol for live quote (e.g., AAPL)")
+
 if st.button("Get Live Quote"):
     if live_symbol:
         try:
             ticker = yf.Ticker(live_symbol)
+
+            # Fetch live price
             quote = ticker.info.get("currentPrice", "N/A")
             st.success(f"Current price for {live_symbol}: ${quote}")
+
+            # Fetch recent historical data
+            df = ticker.history(period="3mo", interval="1d")
+            df.dropna(inplace=True)
+
+            # ---------------- RSI 14 ---------------- #
+            delta = df["Close"].diff()
+            gain = delta.where(delta > 0, 0)
+            loss = -delta.where(delta < 0, 0)
+
+            avg_gain = gain.rolling(window=14).mean()
+            avg_loss = loss.rolling(window=14).mean()
+
+            rs = avg_gain / avg_loss
+            df["RSI_14"] = 100 - (100 / (1 + rs))
+
+            # ---------------- CCI 20 ---------------- #
+            tp = (df["High"] + df["Low"] + df["Close"]) / 3
+            sma_tp = tp.rolling(20).mean()
+            mean_dev = (tp - sma_tp).abs().rolling(20).mean()
+            df["CCI_20"] = (tp - sma_tp) / (0.015 * mean_dev)
+
+            # ---------------- Plot: Price + Volume ---------------- #
+            fig_price = go.Figure()
+            fig_price.add_trace(go.Candlestick(
+                x=df.index,
+                open=df['Open'],
+                high=df['High'],
+                low=df['Low'],
+                close=df['Close'],
+                name="Price"
+            ))
+            fig_price.add_trace(go.Bar(
+                x=df.index,
+                y=df['Volume'],
+                name="Volume",
+                marker_color="lightblue",
+                yaxis="y2"
+            ))
+
+            fig_price.update_layout(
+                title=f"{live_symbol} Price & Volume",
+                xaxis_title="Date",
+                yaxis_title="Price",
+                yaxis2=dict(
+                    title="Volume",
+                    overlaying="y",
+                    side="right",
+                    showgrid=False
+                ),
+                xaxis_rangeslider_visible=False
+            )
+            st.plotly_chart(fig_price, use_container_width=True)
+
+            # ---------------- Plot: RSI ---------------- #
+            fig_rsi = go.Figure()
+            fig_rsi.add_trace(go.Scatter(
+                x=df.index,
+                y=df["RSI_14"],
+                mode="lines",
+                name="RSI 14",
+                line=dict(color="orange")
+            ))
+            fig_rsi.add_hline(y=70, line_dash="dash", line_color="red")
+            fig_rsi.add_hline(y=30, line_dash="dash", line_color="green")
+
+            fig_rsi.update_layout(title="RSI (14)", yaxis_title="RSI")
+            st.plotly_chart(fig_rsi, use_container_width=True)
+
+            # ---------------- Plot: CCI ---------------- #
+            fig_cci = go.Figure()
+            fig_cci.add_trace(go.Scatter(
+                x=df.index,
+                y=df["CCI_20"],
+                mode="lines",
+                name="CCI 20",
+                line=dict(color="purple")
+            ))
+            fig_cci.add_hline(y=100, line_dash="dash", line_color="red")
+            fig_cci.add_hline(y=-100, line_dash="dash", line_color="green")
+
+            fig_cci.update_layout(title="CCI (20)", yaxis_title="CCI")
+            st.plotly_chart(fig_cci, use_container_width=True)
+
         except Exception as e:
             st.error(f"Error fetching live quote: {e}")
     else:
