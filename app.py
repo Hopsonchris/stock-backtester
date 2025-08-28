@@ -241,7 +241,7 @@ if st.sidebar.button("▶️ Run Analysis"):
     else:
         st.sidebar.warning("Please enter at least one stock symbol.")
 
-        # Section 2: Live Quotes
+# Section 2: Live Quotes
 st.header("💹 Live Stock Quotes Section")
 live_symbol = st.text_input("Enter stock symbol for live quote (e.g., AAPL)")
 
@@ -341,3 +341,68 @@ if st.button("Get Live Quote"):
             st.error(f"Error fetching live quote: {e}")
     else:
         st.warning("Please enter a stock symbol.")
+
+# Section 3: Stock and Fund Screener (Added below Live Quotes)
+st.header("🔍 Stock and Fund Screener")
+st.write("Screen stocks and funds (e.g., ETFs) based on fundamental criteria. Enter a list of symbols and apply filters.")
+
+screener_symbols = st.text_input("Enter symbols to screen (comma-separated, e.g., AAPL,MSFT,SPY,VWO)", "")
+
+col1, col2, col3 = st.columns(3)
+
+with col1:
+    min_market_cap = st.number_input("Min Market Cap (in billions)", min_value=0.0, value=0.0, step=0.1) * 1e9
+    max_pe = st.number_input("Max P/E Ratio", min_value=0.0, value=0.0, step=0.1)
+
+with col2:
+    min_roe = st.number_input("Min ROE (%)", min_value=0.0, value=0.0, step=0.1) / 100
+    min_div_yield = st.number_input("Min Dividend Yield (%)", min_value=0.0, value=0.0, step=0.01) / 100
+
+with col3:
+    max_beta = st.number_input("Max Beta", min_value=0.0, value=0.0, step=0.1)
+    sector = st.text_input("Sector (exact match, e.g., Technology)", "")
+
+if st.button("Run Screener"):
+    if screener_symbols:
+        symbols_list = [s.strip().upper() for s in screener_symbols.split(",")]
+        with st.spinner("Fetching data and screening... this may take a moment."):
+            df = fetch_fundamental_metrics(symbols_list)
+            
+            # Convert relevant columns to numeric, handling 'N/A'
+            numeric_cols = ["Market Cap", "P/E Ratio", "ROE", "Dividend Yield", "Beta"]
+            for col in numeric_cols:
+                df[col] = pd.to_numeric(df[col], errors='coerce')
+            
+            # Apply filters only if values are set (non-zero for mins/maxes)
+            filtered_df = df.copy()
+            if min_market_cap > 0:
+                filtered_df = filtered_df[filtered_df["Market Cap"] >= min_market_cap]
+            if max_pe > 0:
+                filtered_df = filtered_df[filtered_df["P/E Ratio"] <= max_pe]
+            if min_roe > 0:
+                filtered_df = filtered_df[filtered_df["ROE"] >= min_roe]
+            if min_div_yield > 0:
+                filtered_df = filtered_df[filtered_df["Dividend Yield"] >= min_div_yield]
+            if max_beta > 0:
+                filtered_df = filtered_df[filtered_df["Beta"] <= max_beta]
+            if sector:
+                filtered_df = filtered_df[filtered_df["Sector"].str.lower() == sector.lower()]  # Case-insensitive match
+            
+            # Format for display (similar to Analyze Stocks)
+            display_df = filtered_df.copy()
+            for col in ["Market Cap"]:
+                if col in display_df.columns:
+                    display_df[col] = display_df[col].apply(lambda x: f"{x:,.0f}" if pd.notna(x) else "N/A")
+            for col in ["P/E Ratio", "Forward P/E", "EPS", "ROE", "Debt/Equity", "P/B Ratio", "PEG Ratio", "Beta", "52 Week High", "52 Week Low"]:
+                if col in display_df.columns:
+                    display_df[col] = display_df[col].apply(lambda x: f"{x:.2f}" if pd.notna(x) else "N/A")
+            if "Dividend Yield" in display_df.columns:
+                display_df["Dividend Yield"] = display_df["Dividend Yield"].apply(lambda x: f"{x*100:.2f}%" if pd.notna(x) else "N/A")
+            
+            st.subheader("Screened Results")
+            st.dataframe(display_df, use_container_width=True)
+            
+            if filtered_df.empty:
+                st.info("No symbols match the criteria.")
+    else:
+        st.warning("Please enter at least one symbol.")
