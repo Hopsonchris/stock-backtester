@@ -8,6 +8,55 @@ import yfinance as yf
 import pandas as pd
 import plotly.graph_objects as go
 from datetime import datetime, timedelta
+import urllib.request
+
+# Function to fetch S&P 500 data with caching for efficiency
+@st.cache_data
+def fetch_sp500_data():
+    """
+    Fetches the list of S&P 500 tickers from Wikipedia and retrieves financial metrics
+    for each using yfinance. Handles errors by skipping problematic tickers.
+    """
+    # Set up headers to bypass HTTP 403 Forbidden
+    url = 'https://en.wikipedia.org/wiki/List_of_S%26P_500_companies'
+    headers = {'User-Agent': 'Mozilla/5.0'}
+    req = urllib.request.Request(url, headers=headers)
+
+    # Read the HTML content manually
+    with urllib.request.urlopen(req) as response:
+        html = response.read()
+
+    # Parse the HTML content into a list of tables
+    tables = pd.read_html(html)
+    sp500_df = tables[0]  # First table contains the list
+    tickers = sp500_df['Symbol'].tolist()
+    
+    data = []
+    for ticker in tickers:
+        try:
+            stock = yf.Ticker(ticker)
+            info = stock.info
+            if info:
+                # Extract relevant metrics, convert units where necessary
+                row = {
+                    'Ticker': ticker,
+                    'Company Name': info.get('longName', 'N/A'),
+                    'Sector': info.get('sector', 'N/A'),
+                    'Market Cap': info.get('marketCap', float('nan')) / 1e9,  # Convert to billions USD
+                    'P/E Ratio': info.get('trailingPE', float('nan')),
+                    'P/B Ratio': info.get('priceToBook', float('nan')),
+                    'ROE': info.get('returnOnEquity', float('nan')) * 100,  # Convert to percentage
+                    'Debt-to-Equity': info.get('debtToEquity', float('nan')),
+                    'Dividend Yield': info.get('dividendYield', 0) * 100  # Convert to percentage, default to 0
+                }
+                data.append(row)
+            else:
+                st.warning(f"No data available for {ticker}")
+        except Exception as e:
+            st.warning(f"Error fetching data for {ticker}: {e}")
+    
+    # Return as Pandas DataFrame
+    return pd.DataFrame(data)
 
 # ------------------------------
 # Function to fetch historical data
@@ -164,18 +213,70 @@ st.set_page_config(page_title="Stock Analysis App", layout="wide")
 st.title("📈 Stock Analysis and Backtesting App")
 
 st.sidebar.header("⚙️ Controls")
-symbols_input = st.sidebar.text_input("Enter symbols (e.g., AAPL, MSFT, GOOG)", "AAPL,GOOG")
 
-# UPDATED: Added "Analyze Stocks" as the first option
 analysis_type = st.sidebar.selectbox(
     "Select Analysis Type",
-    ["Analyze Stocks", "Buy and Hold", "Moving Average Crossover"]
+    ["Analyze Stocks", "S&P 500 Screener", "Buy and Hold", "Moving Average Crossover"]
 )
 
-# --- Logic to conditionally display inputs based on the selected analysis type ---
-if analysis_type == "Analyze Stocks":
-    st.sidebar.info("Fetches and displays key fundamental metrics for the selected stocks.")
-else:
+if analysis_type != "S&P 500 Screener":
+    symbols_input = st.sidebar.text_input("Enter symbols (e.g., AAPL, MSFT, GOOG)", "AAPL,GOOG")
+
+if analysis_type == "S&P 500 Screener":
+    st.sidebar.header("Market Sector")
+    # Sectors will be populated after data fetch, but for now placeholder; actual in run
+    # But since rerun, we need to fetch data first? No, for multiselect, need data for unique sectors.
+    # Problem: to get sectors, need data, but data heavy, cached.
+    # So, to handle, fetch data outside if possible, but to avoid always fetch, perhaps fetch when button or when type selected.
+    # But in Streamlit, tricky. One way: fetch always, since cached, it's fast after first.
+    df_placeholder = fetch_sp500_data()  # Fetch here, cached
+    sectors = sorted(df_placeholder['Sector'].unique())
+    selected_sectors = st.sidebar.multiselect("Sector(s)", sectors, default=sectors)
+    
+    st.sidebar.header("Market Capitalization")
+    min_cap, max_cap = st.sidebar.slider(
+        "Market Cap (Billions USD)",
+        min_value=0.0,
+        max_value=3000.0,
+        value=(10.0, 2000.0)
+    )
+    
+    st.sidebar.header("Valuation Metrics")
+    min_pe, max_pe = st.sidebar.slider(
+        "Price-to-Earnings (P/E) Ratio",
+        min_value=0.0,
+        max_value=100.0,
+        value=(0.0, 100.0)
+    )
+    min_pb, max_pb = st.sidebar.slider(
+        "Price-to-Book (P/B) Ratio",
+        min_value=0.0,
+        max_value=20.0,
+        value=(0.0, 20.0)
+    )
+    
+    st.sidebar.header("Profitability & Health")
+    min_roe, max_roe = st.sidebar.slider(
+        "Return on Equity (ROE) (%)",
+        min_value=-50.0,
+        max_value=100.0,
+        value=(-50.0, 100.0)
+    )
+    min_de, max_de = st.sidebar.slider(
+        "Debt-to-Equity Ratio",
+        min_value=0.0,
+        max_value=5.0,
+        value=(0.0, 5.0)
+    )
+    
+    st.sidebar.header("Dividends")
+    min_dy, max_dy = st.sidebar.slider(
+        "Dividend Yield (%)",
+        min_value=0.0,
+        max_value=15.0,
+        value=(0.0, 15.0)
+    )
+elif analysis_type != "Analyze Stocks":
     # These inputs are only for backtesting
     st.sidebar.subheader("Backtest Parameters")
     start_date = st.sidebar.date_input("Start Date", value=datetime.now() - timedelta(days=365*5))
@@ -191,11 +292,46 @@ else:
 
 # Central "Run" button
 if st.sidebar.button("▶️ Run Analysis"):
-    if symbols_input:
-        symbols = [s.strip().upper() for s in symbols_input.split(",")]
-
-        # --- Main logic block for handling different analysis types ---
-        if analysis_type == "Analyze Stocks":
+    if analysis_type == "S&P 500 Screener":
+        with st.spinner("Running S&P 500 Screener..."):
+            df = fetch_sp500_data()
+            
+            # Apply filters
+            filtered_df = df[df['Sector'].isin(selected_sectors)]
+            filtered_df = filtered_df[
+                (filtered_df['Market Cap'] >= min_cap) & (filtered_df['Market Cap'] <= max_cap)
+            ]
+            filtered_df = filtered_df[
+                (filtered_df['P/E Ratio'] >= min_pe) & (filtered_df['P/E Ratio'] <= max_pe)
+            ]
+            filtered_df = filtered_df[
+                (filtered_df['P/B Ratio'] >= min_pb) & (filtered_df['P/B Ratio'] <= max_pb)
+            ]
+            filtered_df = filtered_df[
+                (filtered_df['ROE'] >= min_roe) & (filtered_df['ROE'] <= max_roe)
+            ]
+            filtered_df = filtered_df[
+                (filtered_df['Debt-to-Equity'] >= min_de) & (filtered_df['Debt-to-Equity'] <= max_de)
+            ]
+            filtered_df = filtered_df[
+                (filtered_df['Dividend Yield'] >= min_dy) & (filtered_df['Dividend Yield'] <= max_dy)
+            ]
+            
+            st.subheader(f"Displaying {len(filtered_df)} of {len(df)} stocks")
+            
+            # Display selected columns in an interactive table
+            display_columns = ['Ticker', 'Company Name', 'Sector', 'Market Cap', 'P/E Ratio', 'Dividend Yield', 'ROE']
+            # Format for display
+            format_dict = {
+                'Market Cap': '{:.2f}',
+                'P/E Ratio': '{:.2f}',
+                'Dividend Yield': '{:.2f}',
+                'ROE': '{:.2f}'
+            }
+            st.dataframe(filtered_df[display_columns].style.format(format_dict))
+    elif analysis_type == "Analyze Stocks":
+        if symbols_input:
+            symbols = [s.strip().upper() for s in symbols_input.split(",")]
             st.header("📊 Fundamental Analysis")
             with st.spinner("Fetching fundamental data... this may take a moment."):
                 fundamental_data = fetch_fundamental_metrics(symbols)
@@ -210,8 +346,11 @@ if st.sidebar.button("▶️ Run Analysis"):
                     fundamental_data["Dividend Yield"] = fundamental_data["Dividend Yield"].apply(lambda x: f"{x*100:.2f}%" if isinstance(x, (int, float)) else "N/A")
 
                 st.dataframe(fundamental_data, use_container_width=True)
-
-        else: # Handle backtesting strategies
+        else:
+            st.sidebar.warning("Please enter at least one stock symbol.")
+    else:  # Handle backtesting strategies
+        if symbols_input:
+            symbols = [s.strip().upper() for s in symbols_input.split(",")]
             st.header("📈 Backtest Results")
             with st.spinner("Fetching data and running backtest..."):
                 data = fetch_historical_data(symbols, start_date, end_date)
@@ -238,8 +377,8 @@ if st.sidebar.button("▶️ Run Analysis"):
                         
                         st.plotly_chart(plot_price_chart(df_perf, symbol), use_container_width=True)
                         st.write("---")
-    else:
-        st.sidebar.warning("Please enter at least one stock symbol.")
+        else:
+            st.sidebar.warning("Please enter at least one stock symbol.")
 
 # Section 2: Live Quotes
 st.header("💹 Live Stock Quotes Section")
@@ -341,68 +480,3 @@ if st.button("Get Live Quote"):
             st.error(f"Error fetching live quote: {e}")
     else:
         st.warning("Please enter a stock symbol.")
-
-# Section 3: Stock and Fund Screener (Added below Live Quotes)
-st.header("🔍 Stock and Fund Screener")
-st.write("Screen stocks and funds (e.g., ETFs) based on fundamental criteria. Enter a list of symbols and apply filters.")
-
-screener_symbols = st.text_input("Enter symbols to screen (comma-separated, e.g., AAPL,MSFT,SPY,VWO)", "")
-
-col1, col2, col3 = st.columns(3)
-
-with col1:
-    min_market_cap = st.number_input("Min Market Cap (in billions)", min_value=0.0, value=0.0, step=0.1) * 1e9
-    max_pe = st.number_input("Max P/E Ratio", min_value=0.0, value=0.0, step=0.1)
-
-with col2:
-    min_roe = st.number_input("Min ROE (%)", min_value=0.0, value=0.0, step=0.1) / 100
-    min_div_yield = st.number_input("Min Dividend Yield (%)", min_value=0.0, value=0.0, step=0.01) / 100
-
-with col3:
-    max_beta = st.number_input("Max Beta", min_value=0.0, value=0.0, step=0.1)
-    sector = st.text_input("Sector (exact match, e.g., Technology)", "")
-
-if st.button("Run Screener"):
-    if screener_symbols:
-        symbols_list = [s.strip().upper() for s in screener_symbols.split(",")]
-        with st.spinner("Fetching data and screening... this may take a moment."):
-            df = fetch_fundamental_metrics(symbols_list)
-            
-            # Convert relevant columns to numeric, handling 'N/A'
-            numeric_cols = ["Market Cap", "P/E Ratio", "ROE", "Dividend Yield", "Beta"]
-            for col in numeric_cols:
-                df[col] = pd.to_numeric(df[col], errors='coerce')
-            
-            # Apply filters only if values are set (non-zero for mins/maxes)
-            filtered_df = df.copy()
-            if min_market_cap > 0:
-                filtered_df = filtered_df[filtered_df["Market Cap"] >= min_market_cap]
-            if max_pe > 0:
-                filtered_df = filtered_df[filtered_df["P/E Ratio"] <= max_pe]
-            if min_roe > 0:
-                filtered_df = filtered_df[filtered_df["ROE"] >= min_roe]
-            if min_div_yield > 0:
-                filtered_df = filtered_df[filtered_df["Dividend Yield"] >= min_div_yield]
-            if max_beta > 0:
-                filtered_df = filtered_df[filtered_df["Beta"] <= max_beta]
-            if sector:
-                filtered_df = filtered_df[filtered_df["Sector"].str.lower() == sector.lower()]  # Case-insensitive match
-            
-            # Format for display (similar to Analyze Stocks)
-            display_df = filtered_df.copy()
-            for col in ["Market Cap"]:
-                if col in display_df.columns:
-                    display_df[col] = display_df[col].apply(lambda x: f"{x:,.0f}" if pd.notna(x) else "N/A")
-            for col in ["P/E Ratio", "Forward P/E", "EPS", "ROE", "Debt/Equity", "P/B Ratio", "PEG Ratio", "Beta", "52 Week High", "52 Week Low"]:
-                if col in display_df.columns:
-                    display_df[col] = display_df[col].apply(lambda x: f"{x:.2f}" if pd.notna(x) else "N/A")
-            if "Dividend Yield" in display_df.columns:
-                display_df["Dividend Yield"] = display_df["Dividend Yield"].apply(lambda x: f"{x*100:.2f}%" if pd.notna(x) else "N/A")
-            
-            st.subheader("Screened Results")
-            st.dataframe(display_df, use_container_width=True)
-            
-            if filtered_df.empty:
-                st.info("No symbols match the criteria.")
-    else:
-        st.warning("Please enter at least one symbol.")
