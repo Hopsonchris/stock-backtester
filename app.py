@@ -1,6 +1,6 @@
 # app.py
 # Stock Analysis and Backtesting App
-# Run with: streamlit run app.py
+# Run with: py -m streamlit run app.py
 
 import numpy as np
 import streamlit as st
@@ -191,19 +191,65 @@ def plot_equity_curve(df):
 
 def plot_price_chart(df, symbol):
     fig = go.Figure()
+
+    # --- Price Candlesticks ---
     fig.add_trace(go.Candlestick(
         x=df.index,
         open=df["Open"],
         high=df["High"],
         low=df["Low"],
         close=df["Close"],
-        name="Price"
+        name="Price",
+        yaxis="y1"
     ))
+
+    # --- Close Line for clarity ---
+    fig.add_trace(go.Scatter(
+        x=df.index,
+        y=df["Close"],
+        line=dict(color="black", width=1),
+        name="Close",
+        yaxis="y1"
+    ))
+
+    # --- Moving Averages (if available) ---
     if "short_ma" in df.columns:
-        fig.add_trace(go.Scatter(x=df.index, y=df["short_ma"], line=dict(color="blue", width=1.5), name="Short MA"))
+        fig.add_trace(go.Scatter(
+            x=df.index,
+            y=df["short_ma"],
+            line=dict(color="blue", width=1.5),
+            name="Short MA",
+            yaxis="y1"
+        ))
     if "long_ma" in df.columns:
-        fig.add_trace(go.Scatter(x=df.index, y=df["long_ma"], line=dict(color="red", width=1.5), name="Long MA"))
-    fig.update_layout(title=f"Price Chart for {symbol}", xaxis_title="Date", yaxis_title="Price ($)", xaxis_rangeslider_visible=False)
+        fig.add_trace(go.Scatter(
+            x=df.index,
+            y=df["long_ma"],
+            line=dict(color="red", width=1.5),
+            name="Long MA",
+            yaxis="y1"
+        ))
+
+    # --- Equity Curve Overlay ---
+    if "equity" in df.columns:
+        fig.add_trace(go.Scatter(
+            x=df.index,
+            y=df["equity"],
+            line=dict(color="green", width=2, dash="dot"),
+            name="Equity Curve",
+            yaxis="y2"
+        ))
+
+    # --- Layout ---
+    fig.update_layout(
+        title=f"Price & Equity Chart for {symbol}",
+        xaxis=dict(title="Date"),
+        yaxis=dict(title="Price ($)", side="left"),
+        yaxis2=dict(title="Equity ($)", side="right", overlaying="y"),
+        xaxis_rangeslider_visible=False,
+        legend=dict(orientation="h", yanchor="bottom", y=-0.3, xanchor="center", x=0.5)
+    )
+
     return fig
 
 # ------------------------------
